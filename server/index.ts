@@ -269,12 +269,50 @@ async function loadTimetableWithRetry(from?: Date, to?: Date): Promise<Timetable
 }
 
 function mapError(error: unknown): Response {
-  if (error instanceof RateLimitError) return json({ error: "rate_limited" }, 429);
-  if (error instanceof AccessDeniedError || error instanceof SuspendedError) return json({ error: "access_denied" }, 403);
-  if (error instanceof NetworkError || error instanceof UnavailableError) return json({ error: "pronote_unavailable" }, 502);
-  if (error instanceof DoubleAuthError) return json({ error: "double_auth_required" }, 500);
-  if (error instanceof ParsingError) return json({ error: "parsing_failed", type: error.type }, 500);
-  if (error instanceof AuthenticationError || error instanceof CryptographicError) return json({ error: "authentication_failed" }, 500);
+  // Log complet côté serveur uniquement — jamais renvoyé au client.
+  // error.constructor.name est fiable même là où error.name est buggé
+  // dans Blocksnote (cf plusieurs classes qui codent "AuthenticationError" en dur).
+  console.error(`[pronote] ${error?.constructor?.name ?? typeof error}:`, error);
+
+  if (error instanceof RateLimitError) {
+    return json({ error: "rate_limited" }, 429);
+  }
+
+  if (error instanceof AccessDeniedError || error instanceof SuspendedError) {
+    // SuspendedError = IP bannie par l'établissement, pas le compte — même code HTTP
+    // mais à surveiller différemment côté monitoring (alerte réseau, pas alerte compte).
+    return json({ error: "access_denied" }, 403);
+  }
+
+  if (error instanceof NetworkError) {
+    return json({ error: "pronote_unavailable", code: error.code }, 502);
+  }
+
+  if (error instanceof UnavailableError) {
+    return json({ error: "pronote_unavailable" }, 502);
+  }
+
+  if (error instanceof SessionExpiredError) {
+    // Ne devrait normalement pas arriver ici : loadTimetableWithRetry() la
+    // rattrape déjà et retente une fois. Si elle remonte quand même, c'est que
+    // le retry a aussi échoué → traiter comme un souci d'auth serveur.
+    return json({ error: "session_refresh_failed" }, 502);
+  }
+
+  if (error instanceof DoubleAuthError) {
+    return json({ error: "double_auth_required" }, 500);
+  }
+
+  if (error instanceof ParsingError) {
+    return json({ error: "parsing_failed", type: error.type }, 500);
+  }
+
+  if (error instanceof AuthenticationError || error instanceof CryptographicError) {
+    // Identifiants en env invalides ou bug crypto — nécessite une intervention
+    // manuelle, ce n'est pas un cas "utilisateur" (compte serveur fixe).
+    return json({ error: "authentication_failed" }, 500);
+  }
+
   const message = error instanceof Error ? error.message : "Unknown server error";
   return json({ error: "internal_error", message }, 500);
 }
