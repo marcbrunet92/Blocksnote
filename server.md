@@ -244,3 +244,17 @@ pour l'importer proprement dans `server/` :
 6. Middleware `API_KEY` + rate limiting léger
 7. Dockerisation + déploiement
 8. (Projet séparé) Widget Android consommant cette API
+
+
+Blocksnote
+Résumé
+Projet local "Blocksnote" (~/tmp/Blocksnote) — wrapper TypeScript/Bun pour interagir avec des instances PRONOTE (auth multi-rôles, notes, devoirs, emploi du temps, QCM, géolocalisation)
+
+Détails
+projet situé dans ~/tmp/Blocksnote sur sa machine, basé sur Bun (bun.lock), build avec bunup (bunup.config.ts : entry src/index.ts, format cjs+esm, target browser), utilise eslint et lefthook, tests dans tests/ (bun test probable)
+structure du code : Authenticator par rôle (Student, Teacher, Parent, Company, Assistant, Administrator, SchoolLife), Session/Instance/School/RequestManager, features Grade, CahierDeTexte (homework), EmploiDuTemps (timetable), MCQ, geolocation — dossier exemples/ organisé par thème et par rôle
+package.json : nom "blocksnote", description "A perfect wrapper for interacting with PRONOTE instances.", licence GPL-3.0, auteur Raphaël (github raphckrman), dépôt github.com/BlocksHub/Blocksnote.git ; scripts "lint" (eslint src --ext .ts --fix) et "build" (bunup) ; dépendances de chiffrement @noble/ciphers, @noble/hashes, micro-rsa-dsa-dh et fflate pour la compression
+API vue via tests : Instance.cleanUrl(url) normalise l'URL d'un établissement PRONOTE (protocole, casse, slashes, query string) vers https://host/pronote/ ; Instance.createFromURL(url) interroge le serveur et retourne source (URL canonique), workspaces (espaces dispo, chacun avec flag delegated), version, cas (SSO académique éventuel) ; Session.create(url, { url, type: NOTSpace.STUDENT, delegated, name }) initialise la session ; new Request().setPronotePayload(session, appName, data).send() envoie une requête vers l'endpoint PRONOTE appelfonction.php ; AES gère le chiffrement symétrique (updateKey/updateIv/resetKey/resetIv) ; Parser.parse décode le format compact PRONOTE (L=label, N=id, _T/V=valeur typée) ; NumberSet.parse décode les intervalles PRONOTE ([0..3]) ; DateParser.parse gère les formats de date français de PRONOTE ; flow d'authentification complet vu dans exemples/authentication/student.exemple.ts : Instance.createFromURL(url) → new StudentAuthenticator(instance) → renseignement des credentials (askForCredentials, via @inquirer/prompts) → authenticator.finalize() retourne un Student avec account.user.fullName
+but : créer une application Android à partir de ce repo Blocksnote, dont la seule fonction est d'afficher un widget (écran d'accueil) avec l'emploi du temps
+architecture retenue : un petit serveur (Bun) qui expose Blocksnote via une API HTTP, consommée ensuite par l'appli/widget Android (plutôt que tout réécrire en natif ou passer par Flutter/home_widget)
+simplification décidée : le serveur ne gère qu'un seul compte PRONOTE (identifiants en variables d'environnement, pas de base de données ni de multi-comptes) et n'expose qu'une seule fonction : l'emploi du temps
