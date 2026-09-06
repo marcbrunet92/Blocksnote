@@ -19,6 +19,7 @@ import { UnavailableError } from "../src/structures/errors/UnavailableError";
 import { Detention } from "../src/routes/PageEmploiDuTemps/Detention";
 import type { Timetable } from "../src/routes/PageEmploiDuTemps/Common";
 import { Lesson } from "../src/routes/PageEmploiDuTemps/Lesson";
+import type { StudentUserSettings } from "../src/routes/ParametresUtilisateurs/Student";
 import { Administrator } from "../src/structures/users/Administrator";
 import { Assistant } from "../src/structures/users/Assistant";
 import { Company } from "../src/structures/users/Company";
@@ -26,6 +27,7 @@ import { Parent } from "../src/structures/users/Parent";
 import { SchoolLife } from "../src/structures/users/SchoolLife";
 import { Student } from "../src/structures/users/Student";
 import { Teacher } from "../src/structures/users/Teacher";
+import type { Class } from "../src/types/user";
 
 type Role = "student" | "teacher" | "parent" | "company" | "assistant" | "administrator" | "schoollife";
 type TimetableUser = Student | Teacher | Parent | Company | Assistant | Administrator | SchoolLife;
@@ -95,6 +97,7 @@ function isAuthorized(request: Request): boolean {
   if (!value) return false;
   if (value === env.apiKey) return true;
   const [scheme, token] = value.split(/\s+/, 2);
+  if (!scheme || !token) return false;
   return scheme.toLowerCase() === "bearer" && token === env.apiKey;
 }
 
@@ -144,20 +147,14 @@ function toTimetablePayload(timetable: Timetable, requestedFrom?: Date, requeste
     date: toDateOnlyString(day.date),
     lessons: day.lessons.map((slot) => {
       if (slot instanceof Detention) return mapDetention(slot);
-      if (slot instanceof Lesson) return mapLesson(slot);
-      return {
-        kind: "unknown",
-        start: slot.from.toISOString(),
-        end: slot.to.toISOString(),
-        rooms: slot.rooms,
-        staffs: slot.staffs,
-        excluded: slot.excluded
-      };
+      return mapLesson(slot);
     })
   }));
 
-  const rangeFrom = requestedFrom ?? (days.length > 0 ? new Date(`${days[0].date}T00:00:00.000Z`) : undefined);
-  const rangeTo = requestedTo ?? (days.length > 0 ? new Date(`${days[days.length - 1].date}T00:00:00.000Z`) : undefined);
+  const firstDay = days.at(0);
+  const lastDay = days.at(-1);
+  const rangeFrom = requestedFrom ?? (firstDay ? new Date(`${firstDay.date}T00:00:00.000Z`) : undefined);
+  const rangeTo = requestedTo ?? (lastDay ? new Date(`${lastDay.date}T00:00:00.000Z`) : undefined);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -217,19 +214,19 @@ function resetAuthentication(): void {
   authenticationInFlight = null;
 }
 
-function resolveTargetFromUser(user: Parent | Assistant | Company | SchoolLife | Administrator) {
+function resolveStudentTarget(user: Parent | Assistant | Company): StudentUserSettings {
   if (user instanceof Parent || user instanceof Assistant) {
     const child = user.user.childrens[0];
     if (!child) throw new Error("No child available for this account.");
     return child;
   }
 
-  if (user instanceof Company) {
-    const student = user.user.students[0];
-    if (!student) throw new Error("No student available for this account.");
-    return student;
-  }
+  const student = user.user.students[0];
+  if (!student) throw new Error("No student available for this account.");
+  return student;
+}
 
+function resolveClassTarget(user: SchoolLife | Administrator): Class {
   const classroom = user.user.classes[0];
   if (!classroom) throw new Error("No class available for this account.");
   return classroom;
@@ -243,11 +240,15 @@ async function loadTimetable(user: TimetableUser, from?: Date, to?: Date): Promi
   }
 
   if (user instanceof Parent || user instanceof Assistant || user instanceof Company) {
-    return await user.timetable(resolveTargetFromUser(user), options);
+    return await user.timetable(resolveStudentTarget(user), options);
   }
 
-  if (user instanceof SchoolLife || user instanceof Administrator) {
-    return await user.timetable(resolveTargetFromUser(user), options);
+  if (user instanceof SchoolLife) {
+    return await user.timetable([resolveClassTarget(user)], options);
+  }
+
+  if (user instanceof Administrator) {
+    return await user.timetable(resolveClassTarget(user), options);
   }
 
   throw new Error("Unsupported account type for timetable.");
